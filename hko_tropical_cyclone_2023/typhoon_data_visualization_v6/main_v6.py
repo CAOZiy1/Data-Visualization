@@ -4,20 +4,20 @@ import numpy as np
 import matplotlib.animation as animation
 from pathlib import Path
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.collections import LineCollection   # 新增
+from matplotlib.collections import LineCollection   # Added
 
-# 自动定位：脚本同目录的 HKO2023BST.csv
+# Auto locate: HKO2023BST.csv in the same directory as this script
 CSV_FILE = Path(__file__).with_name("HKO2023BST.csv")
 
 def animate_typhoons(save_gif=True, interval=200, fps=5,
-                     show_track=True,      # 是否显示轨迹
-                     hold_last_frames=15   # 结尾多停留帧数
+                     show_track=True,      # Whether to show track
+                     hold_last_frames=15   # Extra frames to hold at the end
                      ):
     if not CSV_FILE.exists():
-        print(f"[ERROR] 未找到数据文件: {CSV_FILE}")
+        print(f"[ERROR] Data file not found: {CSV_FILE}")
         return
 
-    # 读数据（前三行是标题说明，跳过）
+    # Read data (skip first 3 header description lines)
     df = pd.read_csv(CSV_FILE, skiprows=3)
     df.columns = [c.split('/')[0].strip() for c in df.columns]
 
@@ -29,7 +29,7 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
     ]
     for col in required:
         if col not in df.columns:
-            print("[ERROR] 缺少列:", col)
+            print("[ERROR] Missing column:", col)
             return
 
     grouped = df.groupby('Tropical Cyclone Name')
@@ -42,21 +42,21 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
     fig, ax = plt.subplots(figsize=(10, 8))
     fig.patch.set_facecolor('black')
     ax.set_facecolor('black')
-    # 让 Axes 填满整个 Figure，去掉边距
+    # Make Axes fill the whole Figure (remove margins)
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     ax.set_position([0, 0, 1, 1])
     ax.set_aspect('equal', adjustable='box')
-    # 固定范围，避免每帧重算 autoscale (提升速度)
+    # Fix limits to avoid autoscale each frame (performance)
     pad_lat = (lat_max - lat_min) * 0.05
     pad_lon = (lon_max - lon_min) * 0.05
     ax.set_xlim(lon_min - pad_lon, lon_max + pad_lon)
     ax.set_ylim(lat_min - pad_lat, lat_max + pad_lat)
 
-    # 去除脊线（虽然 axis('off') 已经隐藏，但保险）
+    # Remove spines (already hidden by axis off logic, but safer)
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # 配色
+    # Color palettes
     palette_sets = [
         ['#ffb3b3', '#ff6666', '#ff3333', '#ff9999', '#ffd6d6', '#fff5f5'],
         ['#b3d1ff', '#66a3ff', '#3385ff', '#99c2ff', '#d6eaff', '#f5faff'],
@@ -81,17 +81,17 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
         lons = (g['Longitude (0.01 degree E)'] / 100.0).to_numpy()
         winds = g['Estimated maximum surface winds (knot)'].to_numpy()
         wind_norm = (winds - wind_min) / (wind_max - wind_min + 1e-6)
-        color_vals = 1.0 - wind_norm   # 反转：风越大越亮
+        color_vals = 1.0 - wind_norm   # Invert: stronger wind => brighter
         typhoon_tracks.append((name, lons, lats, winds, wind_norm, color_vals, cmaps[name]))
 
     max_len = max(len(t[1]) for t in typhoon_tracks)
     total_frames = max_len + hold_last_frames
 
     def update(frame):
-        # 映射到数据帧（含结尾停留）
+        # Map to data frame index (including final hold)
         data_frame = min(frame, max_len - 1)
 
-        # 清理旧帧元素
+        # Clean previous frame's custom artists
         for ln in list(ax.lines):
             if getattr(ln, "_typhoon_art", False):
                 ln.remove()
@@ -106,10 +106,10 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
             if track_len == 0:
                 continue
 
-            # 针对每个台风单独截断索引
+            # Per-typhoon index clamp
             idx = min(data_frame, track_len - 1)
 
-            # 方向（当停留在最后帧时保持最后一次有效移动方向）
+            # Direction (preserve last valid movement when holding final frame)
             if idx == 0:
                 direction_angle = 0.0
             else:
@@ -117,7 +117,7 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
                 dy = lats[idx] - lats[idx - 1]
                 direction_angle = 0.0 if (dx == 0 and dy == 0) else np.arctan2(dy, dx)
 
-            # 轨迹线
+            # Track polyline
             if show_track and idx > 0:
                 tr_x = lons[:idx + 1]
                 tr_y = lats[:idx + 1]
@@ -132,7 +132,7 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
                 track_line._typhoon_art = True
                 artists.append(track_line)
 
-            # 螺旋主体
+            # Spiral body
             size = 0.12 + 0.18 * wind_norm[idx]
             draw_artistic_typhoon(
                 ax,
@@ -146,7 +146,7 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
                 frame=data_frame
             )
 
-        # 收集
+        # Collect created artists
         for ln in ax.lines:
             if getattr(ln, "_typhoon_art", False) and ln not in artists:
                 artists.append(ln)
@@ -158,18 +158,18 @@ def animate_typhoons(save_gif=True, interval=200, fps=5,
     ani = animation.FuncAnimation(fig, update, frames=total_frames, interval=interval, blit=False)
     if save_gif:
         out = CSV_FILE.parent / "typhoon_tracks_animation.gif"
-        print(f"[INFO] 保存 GIF: {out}")
-        ani.save(out, writer="pillow", fps=fps, dpi=90)  # dpi 降一点提速
+        print(f"[INFO] Saving GIF: {out}")
+        ani.save(out, writer="pillow", fps=fps, dpi=90)  # Slightly lower dpi for speed
 
     plt.show()
 
 def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wind_val,
                           n_spikes=70, frame=0):
-    # 螺旋臂数量（限制上限 5 提速）
+    # Number of spiral arms (cap at 5 for performance)
     n_arms = 3 + int(2 * min(1, wind_val + 0.15))
     base_rotation = frame * (0.35 + 0.45 * wind_val)
 
-    # 点数减半
+    # Reduced point count
     turns = 1.2 + 1.8 * wind_val
     theta_max = turns * 2 * np.pi
     n_points = 70
@@ -181,7 +181,7 @@ def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wi
 
     for arm in range(n_arms):
         phase = arm * 2 * np.pi / n_arms
-        # 用确定性扰动（不再每帧随机 b，避免闪烁 + 减少随机开销）
+        # Deterministic perturbation (avoid per-frame randomness flicker + reduce overhead)
         jitter = 0.15 * wind_val * np.sin(thetas_base * (2.2 + 1.2 * wind_val) + phase * 1.4)
         thetas = thetas_base + phase + base_rotation + jitter * 0.55
 
@@ -201,7 +201,7 @@ def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wi
         x += drift_scale * np.sin(thetas * (3.2 + wind_val) + frame * 0.035 + arm)
         y += drift_scale * np.cos(thetas * (2.8 + 0.5 * wind_val) + frame * 0.045 + arm * 1.1)
 
-        # 生成分段 (n_points-1 段)
+        # Build segments (n_points - 1 segments)
         segs = np.stack(
             [np.column_stack([x[:-1], y[:-1]]), np.column_stack([x[1:], y[1:]])],
             axis=1
@@ -227,7 +227,7 @@ def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wi
         lc._typhoon_art = True
         ax.add_collection(lc)
 
-    # 内核
+    # Core layers
     core_r_base = size * (0.65 + 1.4 * wind_val)
     for i in range(3):
         cr = core_r_base * (0.38 + 0.52 * i / 3)
@@ -241,7 +241,7 @@ def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wi
         circ._typhoon_art = True
         ax.add_patch(circ)
 
-    # 外淡环
+    # Outer faint rings
     for i in range(2):
         r_out = size * (2.0 + 2.6 * wind_val) * (1 + 0.18 * i)
         ring = plt.Circle(
@@ -255,7 +255,7 @@ def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wi
         ax.add_patch(ring)
 
     if wind_val > 0.7:
-        # 降低数量
+        # Reduced count
         for _ in range(5):
             ang = np.random.rand() * 2 * np.pi
             jitter_len = size * (2.0 + 2.2 * np.random.rand())
