@@ -2,23 +2,32 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.animation as animation
-import os
+from pathlib import Path
+from matplotlib.colors import LinearSegmentedColormap
 
-# File name for the typhoon best track data
-CSV_FILE = 'E:/VSCode/Helloworld/hko_tropical_cyclone_2023/hko_tropical_cyclone_2023/HKO2023BST.csv'
+# Auto-locate the CSV in the same directory as this script
+CSV_FILE = Path(__file__).with_name("HKO2023BST.csv")
 
-from matplotlib.collections import LineCollection
-from matplotlib.colors import Normalize, to_rgb
-import matplotlib.cm as cm
-import matplotlib as mpl
-
-def animate_typhoons():
-    if not os.path.exists(CSV_FILE):
-        print(f"CSV file '{CSV_FILE}' not found.")
+def animate_typhoons(save_gif=True, interval=200, fps=5):
+    if not CSV_FILE.exists():
+        print(f"[ERROR] Data file not found: {CSV_FILE}")
         return
 
+    # Read data (first three rows are descriptive headers -> skip)
     df = pd.read_csv(CSV_FILE, skiprows=3)
-    df.columns = [col.split('/')[0].strip() for col in df.columns]
+    df.columns = [c.split('/')[0].strip() for c in df.columns]
+
+    required = [
+        'Tropical Cyclone Name',
+        'Latitude (0.01 degree N)',
+        'Longitude (0.01 degree E)',
+        'Estimated maximum surface winds (knot)'
+    ]
+    for col in required:
+        if col not in df.columns:
+            print("[ERROR] Missing column:", col)
+            return
+
     grouped = df.groupby('Tropical Cyclone Name')
 
     all_lats = df['Latitude (0.01 degree N)'] / 100.0
@@ -29,166 +38,156 @@ def animate_typhoons():
     fig, ax = plt.subplots(figsize=(10, 8))
     fig.patch.set_facecolor('black')
     ax.set_facecolor('black')
-    ax.grid(True, linestyle='--', color='#888888', alpha=0.4)
     ax.set_xlim(lon_min - 1, lon_max + 1)
     ax.set_ylim(lat_min - 1, lat_max + 1)
-    # Remove all text and axes decorations so only animation remains
     ax.axis('off')
 
-    # Assign enhanced color schemes with more vibrant gradients
-    from matplotlib.colors import LinearSegmentedColormap
-    base_colors = [
-        ('red',    ['#0a0000', '#660000', '#ff0000', '#ff6666', '#ffaaaa', '#ffffff']),
-        ('blue',   ['#000033', '#001166', '#0044ff', '#3377ff', '#66aaff', '#ffffff']),
-        ('green',  ['#001100', '#003300', '#00aa00', '#44ff44', '#88ff88', '#ffffff']),
-        ('purple', ['#220033', '#550066', '#aa00aa', '#dd44dd', '#ff88ff', '#ffffff']),
-        ('orange', ['#331100', '#663300', '#ff6600', '#ff9944', '#ffcc88', '#ffffff']),
-        ('cyan',   ['#003333', '#006666', '#00cccc', '#44ffff', '#88ffff', '#ffffff'])
+    # Color palettes per cyclone
+    palette_sets = [
+        ['#ffb3b3', '#ff6666', '#ff3333', '#ff9999', '#ffd6d6', '#fff5f5'],
+        ['#b3d1ff', '#66a3ff', '#3385ff', '#99c2ff', '#d6eaff', '#f5faff'],
+        ['#b3ffb3', '#66ff66', '#33cc33', '#99ff99', '#d6ffd6', '#f5fff5'],
+        ['#e0b3ff', '#c266ff', '#a633ff', '#cc99ff', '#ecd6ff', '#faf5ff'],
+        ['#ffd9b3', '#ffb366', '#ff9933', '#ffcc99', '#ffe6d6', '#fffaf5'],
+        ['#b3ffff', '#66ffff', '#33cccc', '#99ffff', '#d6ffff', '#f5ffff']
     ]
-    typhoon_names = list(grouped.groups.keys())
-    typhoon_cmaps = {}
-    for i, name in enumerate(typhoon_names):
-        _, color_list = base_colors[i % len(base_colors)]
-        cmap = LinearSegmentedColormap.from_list(f'typhoon_{i}', color_list, N=256)
-        typhoon_cmaps[name] = cmap
-    # You can get the colormap for each typhoon by typhoon_cmaps[typhoon_name]
+
+    names = list(grouped.groups.keys())
+    cmaps = {
+        name: LinearSegmentedColormap.from_list(f"ty_{i}", palette_sets[i % len(palette_sets)], N=256)
+        for i, name in enumerate(names)
+    }
 
     wind_min = df['Estimated maximum surface winds (knot)'].min()
     wind_max = df['Estimated maximum surface winds (knot)'].max()
 
-    typhoon_collections = []
-    typhoon_data = []
-    for idx, (name, group) in enumerate(grouped):
-        lats = (group['Latitude (0.01 degree N)'] / 100.0).to_numpy()
-        lons = (group['Longitude (0.01 degree E)'] / 100.0).to_numpy()
-        winds = group['Estimated maximum surface winds (knot)'].to_numpy()
-        # Normalize wind speed: higher wind = lighter color, lower wind = darker color
+    typhoon_tracks = []
+    for name, g in grouped:
+        lats = (g['Latitude (0.01 degree N)'] / 100.0).to_numpy()
+        lons = (g['Longitude (0.01 degree E)'] / 100.0).to_numpy()
+        winds = g['Estimated maximum surface winds (knot)'].to_numpy()
         wind_norm = (winds - wind_min) / (wind_max - wind_min + 1e-6)
-        # Reverse color scale: 0 is dark, 1 is light
-        color_vals = 1.0 - wind_norm
-        points = np.array([lons, lats]).T.reshape(-1, 1, 2)
-        segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        cmap = typhoon_cmaps[name]
-        lc = LineCollection([], cmap=cmap, norm=Normalize(vmin=0, vmax=1), linewidth=3, alpha=0.0, zorder=3)  # alpha=0 hides original line
-        ax.add_collection(lc)
-        typhoon_collections.append(lc)
-        # Pass color_vals for later fractal art
-        typhoon_data.append((segments, color_vals, name, lons, lats, cmap, wind_norm))
-        # Removed text labels to avoid any displayed text
+        color_vals = 1.0 - wind_norm   # Reverse: stronger wind => brighter
+        typhoon_tracks.append((name, lons, lats, winds, wind_norm, color_vals, cmaps[name]))
 
-    max_len = max(len(lons) for _, _, _, lons, lats, _, _ in typhoon_data)
-
-
-    # Adjust draw_artistic_typhoon for larger spikes and centrifugal offset
-    def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wind_val, zoom=0.15, res=36):
-        # Draw an artistic typhoon pattern combining spirals and directional effects
-        
-        # 1. Mandelbrot fractal core
-        x = np.linspace(-zoom, zoom, res) + x0
-        y = np.linspace(-zoom, zoom, res) + y0
-        X, Y = np.meshgrid(x, y)
-        C = X + 1j * Y
-        Z = np.zeros_like(C)
-        img = np.zeros(C.shape, dtype=float)
-        max_iter = int(20 + 80 * wind_val)
-        for i in range(max_iter):
-            mask = np.abs(Z) <= 2
-            Z[mask] = Z[mask] ** 2 + C[mask]
-            img += mask & (img == 0) * (i + 1)
-        img[img == 0] = max_iter
-        img = img / img.max()
-        rgb_img = cmap(color_val * img)
-        ax.imshow(rgb_img, extent=[x0-size, x0+size, y0-size, y0+size], origin='lower', zorder=6, alpha=0.7)
-        
-        # 2. Enhanced spiral arms with particle effects
-        theta = np.linspace(0, 12*np.pi, 600)  # Further increase spiral detail
-        for arm in range(10):  # Increase number of spiral arms
-            arm_offset = arm * np.pi/5 + direction_angle
-            spiral_r = size * (2.0 + 2.5 * np.exp(-theta * 0.05))  # Drastically increase spiral radius
-            
-            # Add extreme randomness for centrifugal effect
-            noise = 0.5 * size * np.sin(theta * 12) * wind_val
-            spiral_x = x0 + (spiral_r + noise) * np.cos(theta + arm_offset)
-            spiral_y = y0 + (spiral_r + noise) * np.sin(theta + arm_offset)
-            
-            # Dynamic color and width variation
-            intensities = np.exp(-theta * 0.05) * (0.5 + 0.5 * wind_val)
-            colors = [cmap(color_val * intensity) for intensity in intensities]
-            widths = size * 30 * wind_val * intensities  # Further increase spike width
-            
-            for i in range(len(spiral_x)-1):
-                alpha = max(0.2, intensities[i] * 0.8)
-                ax.plot([spiral_x[i], spiral_x[i+1]], [spiral_y[i], spiral_y[i+1]], 
-                       color=colors[i], linewidth=widths[i], alpha=alpha, zorder=5)
-        
-        # 3. Dynamic directional tail with turbulence effect
-        tail_length = size * 4 * (0.5 + wind_val)
-        tail_angle = direction_angle + np.pi
-        
-        for j in range(7):  # More tail streamers
-            offset_angle = tail_angle + (j-3) * 0.4
-            turbulence = 0.2 * size * np.sin(j * 2) * wind_val
-            
-            tail_x = [x0, x0 + tail_length * np.cos(offset_angle) + turbulence]
-            tail_y = [y0, y0 + tail_length * np.sin(offset_angle) + turbulence]
-            
-            tail_color = cmap(color_val * (0.2 + 0.3 * (1 - j/7)))
-            tail_width = size * 20 * wind_val * (1 - j/7)
-            tail_alpha = max(0.1, (0.6 - j * 0.08) * wind_val)
-            
-            ax.plot(tail_x, tail_y, color=tail_color, 
-                   linewidth=tail_width, alpha=tail_alpha, zorder=4)
-        
-        # 4. Pulsating eye of the storm
-        eye_size = size * (0.2 + 0.2 * np.sin(wind_val * 10))  # Pulsating effect
-        # Outer eye wall
-        outer_eye = plt.Circle((x0, y0), eye_size * 1.5, 
-                              color=cmap(color_val * 0.6), alpha=0.4, zorder=7)
-        ax.add_patch(outer_eye)
-        # Inner eye
-        inner_eye = plt.Circle((x0, y0), eye_size, 
-                              color=cmap(0.95), alpha=0.9, zorder=8)
-        ax.add_patch(inner_eye)
+    max_len = max(len(t[1]) for t in typhoon_tracks)
 
     def update(frame):
-        # Remove old patches and images to avoid overlap
-        [im.remove() for im in ax.get_images() if im.get_zorder() >= 4]
-        [patch.remove() for patch in ax.patches]
-        
-        for idx, (lc, (segments, color_vals, name, lons, lats, cmap, wind_norm)) in enumerate(zip(typhoon_collections, typhoon_data)):
-            if frame < 1 or frame >= len(lons):
-                lc.set_segments([])
-                continue
-            segs = segments[:frame]
-            colors = color_vals[:frame]
-            winds = wind_norm[:frame]
-            lc.set_segments([])  # Do not draw original track line
-            
-            # Draw artistic typhoon pattern at each track point
-            for i in range(frame):
-                x0, y0 = lons[i], lats[i]
-                color_val = colors[i]
-                wind_val = winds[i]
-                size = 1.0 + 1.0 * wind_val  # Drastically increase size proportional to wind speed
-                
-                # Calculate movement direction angle
-                if i > 0:
-                    dx = lons[i] - lons[i-1]
-                    dy = lats[i] - lats[i-1]
-                    direction_angle = np.arctan2(dy, dx)
-                else:
-                    direction_angle = 0  # Default direction for first point
-                
-                draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wind_val)
-        return typhoon_collections
+        # Remove previous frame's custom artists
+        for ln in list(ax.lines):
+            if getattr(ln, "_typhoon_art", False):
+                ln.remove()
+        for p in list(ax.patches):
+            if getattr(p, "_typhoon_art", False):
+                p.remove()
 
-    # Removed colorbar and any displayed text to show only the animation
+        artists = []
+        if frame == 0:
+            return artists
 
-    ani = animation.FuncAnimation(fig, update, frames=max_len, interval=200, blit=True, repeat=False)
-    ani.save('typhoon_tracks_animation.gif', writer='pillow', fps=5)
+        for (name, lons, lats, winds, wind_norm, color_vals, cmap) in typhoon_tracks:
+            if frame >= len(lons):
+                idx = len(lons) - 1
+            else:
+                idx = frame - 1
+            if idx <= 0:
+                direction_angle = 0.0
+            else:
+                dx = lons[idx] - lons[idx - 1]
+                dy = lats[idx] - lats[idx - 1]
+                direction_angle = np.arctan2(dy, dx)
+
+            size = 0.12 + 0.18 * wind_norm[idx]
+            draw_artistic_typhoon(
+                ax,
+                lons[idx],
+                lats[idx],
+                direction_angle,
+                size,
+                cmap,
+                color_vals[idx],
+                wind_norm[idx],
+                frame=frame
+            )
+
+        # Collect newly added artists
+        for ln in ax.lines:
+            if getattr(ln, "_typhoon_art", False):
+                artists.append(ln)
+        for p in ax.patches:
+            if getattr(p, "_typhoon_art", False):
+                artists.append(p)
+        return artists
+
+    ani = animation.FuncAnimation(fig, update, frames=max_len, interval=interval, blit=True)
+
+    if save_gif:
+        out = CSV_FILE.parent / "typhoon_tracks_animation.gif"
+        print(f"[INFO] Saving GIF: {out}")
+        ani.save(out, writer="pillow", fps=fps)
+
     plt.show()
 
+def draw_artistic_typhoon(ax, x0, y0, direction_angle, size, cmap, color_val, wind_val,
+                          n_spikes=70, frame=0):
+        # Central spike-like radial structure
+        base_rotation = frame * (0.6 + 0.35 * wind_val)
+        angles = np.linspace(0, 2 * np.pi, n_spikes, endpoint=False)
+        for ang in angles:
+            direction_factor = 1.0 + 4.0 * np.clip(np.cos(ang - direction_angle), 0, 1)
+            length = size * (8 + 25 * wind_val) * direction_factor * (0.7 + 0.7 * np.random.rand())
+            phase_jitter = np.sin(frame * 0.1 + ang * 6) * 0.5
+            rot = base_rotation + phase_jitter
+            x1 = x0 + length * np.cos(ang + rot)
+            y1 = y0 + length * np.sin(ang + rot)
+            color_factor = 0.8 + 0.2 * np.clip(np.cos(ang - direction_angle), 0, 1)
+            spike_color = cmap(min(1, color_val * color_factor + 0.08 * np.random.rand()))
+            alpha = 0.4 + 0.5 * direction_factor * (0.7 + 0.3 * np.random.rand())
+            lw = 0.5 + 0.7 * wind_val * direction_factor
+            ln, = ax.plot([x0, x1], [y0, y1],
+                          color=spike_color,
+                          alpha=np.clip(alpha, 0.2, 1),
+                          linewidth=lw,
+                          zorder=9)
+            ln._typhoon_art = True
 
+        # Outer faint rings
+        for i in range(2):
+            r = size * (2 + 2.5 * wind_val) * (1 + 0.15 * i)
+            circ = plt.Circle(
+                (x0, y0),
+                r,
+                color=cmap(color_val * (0.45 + 0.05 * i)),
+                alpha=0.08 - 0.02 * i,
+                zorder=10 + i
+            )
+            circ._typhoon_art = True
+            ax.add_patch(circ)
 
-if __name__ == '__main__':
+        # Inner core
+        inner = plt.Circle(
+            (x0, y0),
+            size * (1 + 2 * wind_val),
+            color=cmap(0.8),
+            alpha=0.18,
+            zorder=15
+        )
+        inner._typhoon_art = True
+        ax.add_patch(inner)
+
+        # Extra energetic lines for strong storms
+        if wind_val > 0.7:
+            for _ in range(6):
+                jitter_ang = np.random.rand() * 2 * np.pi
+                jitter_len = size * (2.0 + 2 * np.random.rand())
+                xj = x0 + jitter_len * np.cos(jitter_ang)
+                yj = y0 + jitter_len * np.sin(jitter_ang)
+                ln, = ax.plot([x0, xj], [y0, yj],
+                              color=cmap(0.1 + 0.8 * np.random.rand()),
+                              alpha=0.18,
+                              linewidth=1.0,
+                              zorder=8)
+                ln._typhoon_art = True
+
+if __name__ == "__main__":
     animate_typhoons()
