@@ -2,4 +2,3 @@ pandas
 numpy
 matplotlib
 pillow
-# cartopy  # Optional: add if you later use geographic projections/basemaps
